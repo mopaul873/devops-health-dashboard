@@ -14,20 +14,12 @@ provider "aws" {
 # Security Group
 resource "aws_security_group" "dashboard_sg" {
   name        = "dashboard-sg"
-  description = "Allow HTTP and SSH traffic"
+  description = "Allow HTTP traffic to the dashboard"
 
   ingress {
     description = "HTTP"
     from_port   = 80
     to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -50,6 +42,11 @@ resource "aws_instance" "dashboard" {
   instance_type          = var.instance_type
   vpc_security_group_ids = [aws_security_group.dashboard_sg.id]
 
+  # Each deployment passes the commit SHA as app_version. A new SHA
+  # changes user_data, which replaces the instance with a fresh one
+  # running that exact commit (immutable deployment).
+  user_data_replace_on_change = true
+
   user_data = <<-EOF
     #!/bin/bash
     yum update -y
@@ -58,6 +55,7 @@ resource "aws_instance" "dashboard" {
     cd /home/ec2-user
     git clone https://github.com/mopaul873/devops-health-dashboard.git
     cd devops-health-dashboard
+    git checkout ${var.app_version}
     gunicorn -w 2 -b 0.0.0.0:80 "app.routes:app" --daemon
   EOF
 

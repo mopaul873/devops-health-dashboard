@@ -1,129 +1,145 @@
-# ⚡ DevOps Health Dashboard
+# DevOps Health Dashboard
 
 ![CI Pipeline](https://github.com/mopaul873/devops-health-dashboard/actions/workflows/test.yml/badge.svg)
 ![CD Pipeline](https://github.com/mopaul873/devops-health-dashboard/actions/workflows/deploy.yml/badge.svg)
 ![Python](https://img.shields.io/badge/Python-3.11-blue)
-![Flask](https://img.shields.io/badge/Flask-3.0-green)
-![Terraform](https://img.shields.io/badge/Terraform-1.14-purple)
+![Flask](https://img.shields.io/badge/Flask-3.1-green)
+![Terraform](https://img.shields.io/badge/Terraform-IaC-purple)
 ![AWS](https://img.shields.io/badge/AWS-EC2-orange)
 
-A real-time system health monitoring dashboard built with Python and Flask, featuring a complete CI/CD pipeline using GitHub Actions and AWS infrastructure provisioned with Terraform.
+A real-time server health dashboard built with **Python** and **Flask**, tested with **pytest**, and deployed to **AWS EC2** by a **GitHub Actions** pipeline that provisions the infrastructure with **Terraform**. A deployment only happens after all 16 automated tests pass.
 
 ---
 
-## 🌍 Live Demo
-> Dashboard deployed on AWS EC2 via automated CD pipeline
-
----
-
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
-flowchart TD
-    A[👨‍💻 Developer pushes code] --> B[GitHub Actions CI]
-    B --> C{16 pytest tests}
-    C -->|✅ Tests pass| D[GitHub Actions CD]
-    C -->|❌ Tests fail| E[🚫 Deploy blocked]
-    D --> F[Terraform provisions AWS]
-    F --> G[AWS EC2 Instance]
-    G --> H[Gunicorn serves Flask app]
-    H --> I[🌍 Live Dashboard on Public IP]
+flowchart LR
+    Dev([Developer]) -->|git push| GH[GitHub repository]
+
+    subgraph Actions["GitHub Actions"]
+        CI[CI: run 16 pytest tests]
+        CD[CD: terraform apply<br/>app_version = commit SHA]
+    end
+
+    GH --> CI
+    CI -->|tests pass| CD
+    CI -->|tests fail| Stop[🚫 Deploy blocked]
+
+    CD <-->|read / write state| S3[(S3 state bucket<br/>+ DynamoDB lock)]
+    CD -->|provision| EC2
+
+    subgraph AWS["AWS · us-east-1"]
+        SG[Security group<br/>HTTP :80 only] --> EC2[EC2 t2.micro<br/>Gunicorn + Flask]
+    end
+
+    User([Users]) -->|http://public-ip| SG
 ```
+
+**How a release works**
+
+1. A push to `main` starts the **CI** job, which installs dependencies and runs all 16 tests.
+2. If every test passes, the **CD** job runs `terraform apply` and passes the **commit SHA** as `app_version`.
+3. Terraform reads the current state from **S3** (locked with **DynamoDB** so two runs can't collide).
+4. Because the commit SHA changed, Terraform **replaces the EC2 instance** with a fresh one. On boot, the new instance clones the repo, checks out that exact commit, and starts the app with **Gunicorn** on port 80.
+5. The pipeline prints the new dashboard URL.
+
+Replacing the server on every release instead of patching it in place is called an **immutable deployment**. Every running server matches a specific commit, and there's no configuration drift.
 
 ---
 
-## 🛠️ Tech Stack
+## Features
+
+- **Live system metrics:** CPU, memory, and disk usage collected with `psutil`
+- **REST API:** JSON endpoints for health checks and raw metrics
+- **16 automated tests:** unit tests for the metrics module and integration tests for every route
+- **CI on every push and pull request:** broken code never reaches `main` unnoticed
+- **Gated CD:** infrastructure changes and deployments only run after tests pass
+- **Infrastructure as Code:** the server, firewall rules, and state backend are all defined in Terraform
+- **Remote state with locking:** safe to run Terraform from the pipeline and a laptop
+
+---
+
+## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Application | Python, Flask, psutil |
-| Testing | pytest (16 automated tests) |
+| Application | Python 3.11, Flask, psutil |
+| Web server | Gunicorn |
+| Testing | pytest (16 tests) |
 | CI/CD | GitHub Actions |
-| Infrastructure | Terraform |
-| Cloud | AWS EC2, Security Groups |
-| Web Server | Gunicorn |
-| OS | Amazon Linux 2 |
+| Infrastructure as Code | Terraform with S3 remote state and DynamoDB locking |
+| Cloud | AWS EC2 (Amazon Linux 2), security groups |
 
 ---
 
-## ✨ Features
+## API Endpoints
 
-- **Real-time metrics** — CPU, memory and disk usage displayed live
-- **REST API** — three endpoints following REST design principles
-- **Health check endpoint** — production-ready `/health` endpoint
-- **Automated testing** — 16 pytest tests covering routes and metrics
-- **CI pipeline** — tests run automatically on every push
-- **CD pipeline** — infrastructure provisioned and deployed automatically
-- **Infrastructure as Code** — entire AWS setup defined in Terraform
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/` | Dashboard UI with live CPU, memory, and disk usage |
+| `GET` | `/health` | Health check, returns `{"status": "healthy"}` |
+| `GET` | `/metrics` | Raw system metrics as JSON |
+
+**Example**
+
+```bash
+curl http://localhost:5000/metrics
+```
+
+```json
+{
+  "cpu_percent": 12.5,
+  "memory": { "total_gb": 7.67, "used_gb": 3.12, "percent": 40.7 },
+  "disk":   { "total_gb": 98.3, "used_gb": 41.6, "percent": 42.3 }
+}
+```
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 devops-health-dashboard/
-│
 ├── app/
-│   ├── __init__.py          # Flask app initialization
-│   ├── routes.py            # REST API endpoints
-│   ├── metrics.py           # System metrics collection
+│   ├── __init__.py            # Flask app setup
+│   ├── routes.py              # Dashboard, /health, and /metrics endpoints
+│   ├── metrics.py             # CPU, memory, and disk collection with psutil
 │   └── templates/
-│       └── dashboard.html   # Dashboard UI
-│
+│       └── dashboard.html     # Dashboard UI
 ├── tests/
-│   ├── test_routes.py       # API endpoint tests
-│   └── test_metrics.py      # Metrics module tests
-│
+│   ├── test_metrics.py        # 9 unit tests for the metrics module
+│   └── test_routes.py         # 7 integration tests for the API routes
 ├── terraform/
-│   ├── main.tf              # EC2 and Security Group
-│   ├── variables.tf         # Input variables
-│   └── outputs.tf           # Output values
-│
-├── .github/
-│   └── workflows/
-│       ├── test.yml         # CI pipeline
-│       └── deploy.yml       # CD pipeline
-│
-├── run.py                   # Application entry point
-└── requirements.txt         # Python dependencies
+│   ├── backend.tf             # S3 remote state + DynamoDB locking
+│   ├── main.tf                # EC2 instance and security group
+│   ├── variables.tf           # Region, instance type, app version
+│   └── outputs.tf             # Dashboard URL, instance ID, public IP
+├── .github/workflows/
+│   ├── test.yml               # CI: tests on every push and pull request
+│   └── deploy.yml             # CD: test, then terraform apply
+├── run.py                     # Local development entry point
+└── requirements.txt
 ```
 
 ---
 
-## 🚀 API Endpoints
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/` | GET | Dashboard UI with live metrics |
-| `/health` | GET | Health check — returns `{"status": "healthy"}` |
-| `/metrics` | GET | Raw system metrics in JSON |
-
----
-
-## 🏃 Run Locally
+## Run Locally
 
 ```bash
-# Clone the repo
 git clone https://github.com/mopaul873/devops-health-dashboard.git
 cd devops-health-dashboard
 
-# Create virtual environment
 python -m venv venv
-source venv/Scripts/activate  # Windows
-source venv/bin/activate       # Mac/Linux
+source venv/bin/activate        # Windows: venv\Scripts\activate
 
-# Install dependencies
 pip install -r requirements.txt
-
-# Run the app
 python run.py
 ```
 
-Visit **http://127.0.0.1:5000** in your browser.
+Open http://127.0.0.1:5000.
 
----
-
-## 🧪 Run Tests
+## Run the Tests
 
 ```bash
 pytest tests/ -v
@@ -131,59 +147,66 @@ pytest tests/ -v
 
 ---
 
-## ☁️ Deploy to AWS
+## Deploy to AWS
+
+### 1. Create the state backend (one time)
 
 ```bash
-# Configure AWS credentials
-aws configure
+aws s3api create-bucket --bucket mopaul873-devops-dashboard-tfstate --region us-east-1
+aws s3api put-bucket-versioning --bucket mopaul873-devops-dashboard-tfstate \
+  --versioning-configuration Status=Enabled
 
-# Initialize Terraform
+aws dynamodb create-table --table-name mopaul873-devops-dashboard-tflocks \
+  --attribute-definitions AttributeName=LockID,AttributeType=S \
+  --key-schema AttributeName=LockID,KeyType=HASH \
+  --billing-mode PAY_PER_REQUEST --region us-east-1
+```
+
+S3 bucket names are global, so change the names in `terraform/backend.tf` if you deploy this in your own account.
+
+### 2. Deploy manually
+
+```bash
 cd terraform
 terraform init
-
-# Preview infrastructure
 terraform plan
-
-# Deploy
 terraform apply
+```
 
-# Destroy when done
+### 3. Or let the pipeline deploy
+
+Add `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` as repository secrets (**Settings → Secrets and variables → Actions**). Every push to `main` will then test and deploy automatically.
+
+### 4. Clean up
+
+```bash
 terraform destroy
 ```
 
 ---
 
-## 🔧 CI/CD Pipeline
+## What I Learned
 
-Every push to `main` automatically:
-1. Spins up Ubuntu server on GitHub
-2. Installs Python and dependencies
-3. Runs all 16 pytest tests
-4. If tests pass → runs Terraform
-5. Provisions AWS infrastructure
-6. Deploys application
-7. Outputs live dashboard URL
-
-⏱️ Total pipeline duration: **~1 minute**
+- Structuring a Flask app and writing **unit and integration tests** with pytest
+- Building a **CI pipeline** that runs on every push and pull request
+- **Gating deployments** on passing tests so broken code can't reach production
+- Why Terraform needs **remote state**: without it, every pipeline run starts from nothing and tries to recreate resources that already exist
+- Using **immutable deployments**, replacing servers instead of patching them
+- Tightening a **security group** to only the ports the app needs
 
 ---
 
-## 📊 What I Learned
+## Roadmap
 
-- Building REST APIs with Flask following production patterns
-- Writing automated tests with pytest (unit and integration)
-- Setting up CI/CD pipelines with GitHub Actions
-- Provisioning cloud infrastructure with Terraform
-- Deploying production applications with Gunicorn
-- AWS EC2, Security Groups and networking basics
-- Git workflow with conventional commits
+- [ ] Put the instance behind an Application Load Balancer for a stable URL and zero-downtime releases
+- [ ] Run the app as a `systemd` service so it restarts automatically after a reboot
+- [ ] Containerize the app with Docker
+- [ ] Switch the pipeline from access keys to **GitHub OIDC**
+- [ ] Look up the latest Amazon Linux AMI with a Terraform data source instead of a fixed AMI ID
+- [ ] Send metrics to CloudWatch and add alarms
 
 ---
 
-## 👨‍💻 Author
+## Author
 
-**Momo, Paul**
-- GitHub: [@mopaul873](https://github.com/mopaul873)
-- AWS Certified Cloud Practitioner
-- AS Computer Science — December 2026
-
+**Paul Momo** · AWS Certified Cloud Practitioner · B.S. Computer Science (expected June 2027) · [GitHub](https://github.com/mopaul873)

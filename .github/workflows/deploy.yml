@@ -45,11 +45,11 @@ jobs:
         working-directory: ./terraform
 
       - name: Terraform Plan
-        run: terraform plan
+        run: terraform plan -var="app_version=${{ github.sha }}"
         working-directory: ./terraform
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve -var="app_version=${{ github.sha }}"
         working-directory: ./terraform
 
       - name: Get Dashboard URL
